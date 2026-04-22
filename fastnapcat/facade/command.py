@@ -23,6 +23,7 @@ from fastnapcat.command.parser import (
     ParsedCommand,
     parse_command_text,
 )
+from fastnapcat.command.help import render_command_help
 from fastnapcat.command.models import CommandArgs
 from fastnapcat.context.command import CommandContext
 from fastnapcat.context.message import MessageContext, _coerce_message_event
@@ -353,86 +354,14 @@ def _render_command_help(
     matched_prefix: str | None = None,
     model: type[CommandArgs] | None = None,
 ) -> str:
-    command_name = f"{matched_prefix or _select_help_prefix(spec)}{spec.name}"
-    alias_prefix = matched_prefix or _select_help_prefix(spec)
-    usage_parts = [command_name]
-    argument_lines: list[str] = []
-    alias_lines = [f"{alias_prefix}{alias}" for alias in spec.aliases]
-    active_model = model or spec.args_model
-
-    if active_model is not None:
-        for field_name, field_info in active_model.model_fields.items():
-            if field_name == "parsed_command":
-                continue
-            placeholder = field_name.upper()
-            option_display = _format_command_field_option(field_name, field_info)
-            if option_display is None:
-                if field_info.is_required():
-                    usage_parts.append(f"<{placeholder}>")
-                else:
-                    usage_parts.append(f"[{placeholder}]")
-            else:
-                if field_info.is_required():
-                    usage_parts.append(f"{option_display} <{placeholder}>")
-                else:
-                    usage_parts.append(f"[{option_display} <{placeholder}>]")
-
-            description = field_info.description or "无说明"
-            label = option_display or field_name
-            line = f"  {label}  {description}"
-            if not field_info.is_required() and field_info.default is not None:
-                line += f" ({field_info.default})"
-            argument_lines.append(line)
-
-    body = [" ".join(usage_parts)]
-
-    if spec.description:
-        body.append(spec.description)
-
-    if alias_lines:
-        body.append(f"= {', '.join(alias_lines)}")
-
-    if argument_lines:
-        body.extend(argument_lines)
-
-    return "\n".join(body)
-
-
-def _select_help_prefix(spec: CommandSpec) -> str:
-    if spec.prefixes:
-        return spec.prefixes[0]
-    return ""
-
-
-def _format_command_field_option(field_name: str, field_info: Any) -> str | None:
-    long_option = f"--{field_name.replace('_', '-')}"
-    aliases: list[str] = []
-
-    candidate_aliases = [
-        field_info.alias,
-        field_info.validation_alias,
-        getattr(field_info, "serialization_alias", None),
-    ]
-    for candidate in candidate_aliases:
-        if not isinstance(candidate, str):
-            continue
-        normalized = candidate.strip()
-        if not normalized:
-            continue
-        if len(normalized) == 1:
-            normalized = f"-{normalized}"
-        elif not normalized.startswith("-"):
-            normalized = f"--{normalized.replace('_', '-')}"
-        if normalized not in aliases:
-            aliases.append(normalized)
-
-    short_aliases = [alias for alias in aliases if alias.startswith("-") and not alias.startswith("--")]
-    long_aliases = [alias for alias in aliases if alias.startswith("--") and alias != long_option]
-
-    parts = [long_option, *short_aliases, *long_aliases]
-    if parts:
-        return " | ".join(parts)
-    return None
+    return render_command_help(
+        command_name=spec.name,
+        model=model or spec.args_model,
+        matched_prefix=matched_prefix,
+        prefixes=spec.prefixes,
+        aliases=spec.aliases,
+        description=spec.description,
+    )
 
 
 def _is_payload_model(annotation: type[Any]) -> bool:

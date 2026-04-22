@@ -129,8 +129,14 @@ async def test_command_alias_and_prefix_match_canonical_command():
 
 
 def test_command_args_help_text_uses_model_metadata():
-    help_text = EchoHelpArgs.help_text()
-    assert "CommandArgs: EchoHelpArgs" in help_text
-    assert "Usage: EchoHelpArgs <content> [<times>]" in help_text
-    assert "content: str (position, required: True) - message body" in help_text
-    assert "times: int (position, required: False) - repeat times [default: 1]" in help_text
+    help_text = EchoHelpArgs.help_text(
+        command_name="echo",
+        prefixes=["/"],
+        aliases=["say"],
+        description="echo text",
+    )
+    assert "/echo <CONTENT> [TIMES]" in help_text
+    assert "echo text" in help_text
+    assert "= /say" in help_text
+    assert "  content  message body" in help_text
+    assert "  times  repeat times (1)" in help_text
