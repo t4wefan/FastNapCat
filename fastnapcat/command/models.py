@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_origin
 
 from fastevents import RuntimeEvent, dependency
 from pydantic import Field
 
-from fastnapcat.command.help import field_accepts_flag, render_command_help
 from fastnapcat.command.parser import ParsedCommand, parse_command_text
 from fastnapcat.models.base import BaseModel
 from fastnapcat.models.events import GroupMessage, PrivateFriendMessage, PrivateGroupMessage
@@ -31,23 +30,17 @@ class CommandArgs(BaseModel):
     parsed_command: CommandArgsMeta = Field(default_factory=CommandArgsMeta)
 
     @classmethod
-    def help_text(
-        cls,
-        *,
-        command_name: str | None = None,
-        matched_prefix: str | None = None,
-        prefixes: tuple[str, ...] | list[str] | None = None,
-        aliases: tuple[str, ...] | list[str] | None = None,
-        description: str = "",
-    ) -> str:
-        return render_command_help(
-            command_name=command_name or cls.__name__,
-            model=cls,
-            matched_prefix=matched_prefix,
-            prefixes=tuple(prefixes or ()),
-            aliases=tuple(aliases or ()),
-            description=description,
-        )
+    def help_text(cls) -> str:
+        lines = [f"CommandArgs: {cls.__name__}"]
+        lines.append(f"Usage: {cls.usage_text()}")
+
+        field_lines = cls.describe_fields()
+        if field_lines:
+            lines.append("Arguments:")
+            lines.extend(field_lines)
+        else:
+            lines.append("Arguments: none")
+        return "\n".join(lines)
 
     @classmethod
     def usage_text(cls) -> str:
@@ -156,7 +149,21 @@ class CommandArgs(BaseModel):
 
     @staticmethod
     def _field_accepts_flag(field_name: str, field_info: Any) -> bool:
-        return field_accepts_flag(field_name, field_info)
+        aliases = [field_name]
+        if isinstance(field_info.alias, str) and field_info.alias not in aliases:
+            aliases.append(field_info.alias)
+        if isinstance(field_info.validation_alias, str) and field_info.validation_alias not in aliases:
+            aliases.append(field_info.validation_alias)
+        serialization_alias = getattr(field_info, "serialization_alias", None)
+        if isinstance(serialization_alias, str) and serialization_alias not in aliases:
+            aliases.append(serialization_alias)
+        if any(candidate.startswith("-") for candidate in aliases):
+            return True
+        annotation = field_info.annotation
+        origin = get_origin(annotation)
+        if annotation is bool:
+            return True
+        return origin is dict
 
 
 def _coerce_command_payload(
