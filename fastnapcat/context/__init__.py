@@ -1,0 +1,1 @@
+"""Context objects for fastnapcat."""

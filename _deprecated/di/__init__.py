@@ -1,0 +1,1 @@
+"""Deprecated DI compatibility helpers."""

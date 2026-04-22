@@ -1,0 +1,4 @@
+refrence/*
+*.pyc
+.pyc
+.env
