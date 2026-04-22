@@ -1,7 +1,7 @@
 [project]
 name = "fastnapcat"
 version = "0.1.0"
-description = "Add your description here"
+description = "一个基于 FastEvents 的 NapCat / OneBot 事件驱动机器人框架"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
