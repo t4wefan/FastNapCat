@@ -24,7 +24,7 @@
 项目当前使用 `uv` 管理依赖。
 
 ```bash
-uv sync
+uv add https://github.com/t4wefan/FastNapCat.git
 ```
 
 运行示例：
