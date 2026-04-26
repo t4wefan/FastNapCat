@@ -90,3 +90,39 @@ async def test_message_context_reply_sends_group_message_request():
         assert sent_messages[0]["params"]["group_id"] == 3
     finally:
         await bot.astop()
+
+
+@pytest.mark.asyncio
+async def test_message_context_uses_current_bot_bridge_with_multiple_instances():
+    bot1 = FastNapCat()
+    bot2 = FastNapCat()
+    seen: dict[str, object] = {}
+    ready1 = asyncio.Event()
+    ready2 = asyncio.Event()
+
+    @bot1.on.group()
+    async def handle_bot1(ctx: MessageContext):
+        seen["bot1_bridge"] = ctx.bridge
+        ready1.set()
+
+    @bot2.on.group()
+    async def handle_bot2(ctx: MessageContext):
+        seen["bot2_bridge"] = ctx.bridge
+        ready2.set()
+
+    await bot1.astart()
+    await bot2.astart()
+    try:
+        await bot1.bridge.handle_inbound_text(
+            make_group_message("from bot1").model_dump_json(by_alias=True)
+        )
+        await bot2.bridge.handle_inbound_text(
+            make_group_message("from bot2").model_dump_json(by_alias=True)
+        )
+        await asyncio.wait_for(ready1.wait(), timeout=1)
+        await asyncio.wait_for(ready2.wait(), timeout=1)
+        assert seen["bot1_bridge"] is bot1.bridge
+        assert seen["bot2_bridge"] is bot2.bridge
+    finally:
+        await bot2.astop()
+        await bot1.astop()

@@ -23,7 +23,7 @@ class ReceiveText(BaseSegment[Literal["text"], ReceiveTextData]):
 
 
 class ReceiveAtData(BaseModel):
-    qq: str = ""
+    qq: str | int = ""
 
 
 class ReceiveAt(BaseSegment[Literal["at"], ReceiveAtData]):
@@ -101,7 +101,7 @@ class ReceiveImages:
 
 
 class ReceiveFaceData(BaseModel):
-    id: str | None = None
+    id: str | int | None = None
 
 
 class ReceiveFace(BaseSegment[Literal["face"], ReceiveFaceData]):
@@ -110,7 +110,7 @@ class ReceiveFace(BaseSegment[Literal["face"], ReceiveFaceData]):
 
 
 class ReceiveReplyData(BaseModel):
-    id: str | None = None
+    id: str | int | None = None
 
 
 class ReceiveReply(BaseSegment[Literal["reply"], ReceiveReplyData]):
@@ -142,7 +142,7 @@ class TextSegment(BaseSegment[Literal["text"], TextSegmentData]):
 
 
 class AtSegmentData(BaseModel):
-    qq: str = ""
+    qq: str | int = ""
 
 
 class AtSegment(BaseSegment[Literal["at"], AtSegmentData]):
@@ -151,7 +151,7 @@ class AtSegment(BaseSegment[Literal["at"], AtSegmentData]):
 
 
 class ReplySegmentData(BaseModel):
-    id: str = ""
+    id: str | int = ""
 
 
 class ReplySegment(BaseSegment[Literal["reply"], ReplySegmentData]):
@@ -160,7 +160,7 @@ class ReplySegment(BaseSegment[Literal["reply"], ReplySegmentData]):
 
 
 class FaceSegmentData(BaseModel):
-    id: str = ""
+    id: str | int = ""
 
 
 class FaceSegment(BaseSegment[Literal["face"], FaceSegmentData]):

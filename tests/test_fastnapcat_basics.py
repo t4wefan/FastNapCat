@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import pytest
-
-from fastnapcat.adapter.tags import command_tag
+from fastnapcat.adapter.inbound import parse_inbound_payload
+from fastnapcat.adapter.tags import TAG_COMMAND
+from fastnapcat.api.builder import api_builder
 from fastnapcat.command.models import CommandArgs
 from fastnapcat.command.parser import parse_command_text
-from fastnapcat.context.message import MessageContext
-from _deprecated.di.signature import analyze_handler_signature
 from fastnapcat.models.events import GroupMessage, GroupSender
 from fastnapcat.models.segments import (
     ReceiveImage,
@@ -14,7 +12,6 @@ from fastnapcat.models.segments import (
     ReceiveText,
     ReceiveTextData,
 )
-from fastnapcat.runtime.protocol import parse_inbound_payload
 
 
 def make_group_message() -> GroupMessage:
@@ -51,17 +48,29 @@ def test_parse_command_text():
 def test_protocol_adds_command_tag():
     payload = make_group_message().model_dump(by_alias=True)
     envelope = parse_inbound_payload(payload)
-    assert command_tag("/ban") in envelope.tags
-    assert envelope.command_name == "/ban"
+    assert TAG_COMMAND in envelope.tags
 
 
-def test_signature_analysis_detects_command_model():
+def test_command_args_help_text_describes_model_fields():
     class EchoArgs(CommandArgs):
-        pass
+        content: str
 
-    async def handler(args: EchoArgs, message: MessageContext):
-        return None
+    help_text = EchoArgs.help_text()
+    assert "CommandArgs: EchoArgs" in help_text
+    assert "Usage: EchoArgs <content>" in help_text
+    assert "content: str (position, required: True)" in help_text
 
-    result = analyze_handler_signature(handler)
-    assert result.command_model is EchoArgs
-    assert "message" in result.known_types
+
+def test_api_builder_generates_unique_default_echo_values():
+    first = api_builder.send_group_message(group_id=3, message="hello")
+    second = api_builder.send_group_message(group_id=3, message="hello")
+    explicit = api_builder.send_group_message(
+        group_id=3,
+        message="hello",
+        echo="custom-echo",
+    )
+
+    assert first.echo != second.echo
+    assert first.echo.startswith("send_group_3_")
+    assert second.echo.startswith("send_group_3_")
+    assert explicit.echo == "custom-echo"

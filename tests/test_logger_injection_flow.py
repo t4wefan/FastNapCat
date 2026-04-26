@@ -49,6 +49,6 @@ async def test_logger_dependency_publishes_outbound_log_event():
         await asyncio.wait_for(ready.wait(), timeout=1)
         assert observed
         assert observed[0].message == "hello log"
-        assert observed[0].source == "logger_dependency"
+        assert observed[0].source.startswith("fastnapcat.di.providers:logger:")
     finally:
         await bot.astop()

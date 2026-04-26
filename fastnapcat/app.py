@@ -14,7 +14,6 @@ from fastnapcat.adapter.tags import outbound_log_tags
 from fastnapcat.facade.api import APIExtension
 from fastnapcat.facade.command import CommandExtension
 from fastnapcat.facade.napcat import NapCatExtension
-from fastnapcat.context.message import MessageContext
 from fastnapcat.models.outbound import OutboundLogIntent
 from fastnapcat.runtime.bridge import RuntimeBridge
 from fastnapcat.runtime.transport import NapCatTransport
@@ -53,7 +52,6 @@ class FastNapCat:
         self.bridge = RuntimeBridge(self.app, self.transport, debug=debug)
         self.runtime = self.bridge
         self.debug = debug
-        MessageContext.bind_bridge(self.bridge)
 
         self.api = APIExtension(self.bridge)
         self.bridge.api = self.api

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Self
+from typing import Self
 
 from PIL import Image
 from fastevents import RuntimeEvent, dependency
@@ -11,11 +11,8 @@ from pydantic import Field
 from fastnapcat.api.responses import APIResponse, SendMessageResponse
 from fastnapcat.message.builder import message_builder
 from fastnapcat.models.base import BaseModel
-from fastnapcat.models.events import (
-    GroupMessage,
-    PrivateFriendMessage,
-    PrivateGroupMessage,
-)
+from fastnapcat.adapter.coerce import coerce_message_event
+from fastnapcat.models.events import GroupMessage, PrivateFriendMessage, PrivateGroupMessage
 from fastnapcat.models.outbound import OutboundMessageIntent
 from fastnapcat.models.segments import (
     ReceiveImage,
@@ -24,6 +21,7 @@ from fastnapcat.models.segments import (
     SendMessageSegment,
 )
 from fastnapcat.runtime.bridge import RuntimeBridge
+from fastnapcat.runtime.registry import bridge_from_event
 
 
 class SentMessage(BaseModel):
@@ -45,21 +43,11 @@ MessageContent = (
 class MessageContext:
     """High-frequency message operations bound to one inbound message event."""
 
-    _bound_bridge: ClassVar[RuntimeBridge | None] = None
-
-    @staticmethod
-    def bind_bridge(bridge: RuntimeBridge) -> None:
-        MessageContext._bound_bridge = bridge
-
     @classmethod
     def _provider(cls):
         @dependency
         def _message_context(event: RuntimeEvent) -> Self:
-            payload = _coerce_message_event(event.payload)
-            bridge = cls._bound_bridge
-            if bridge is None:
-                raise RuntimeError("MessageContext bridge is not bound")
-            return cls(payload, bridge)
+            return cls(coerce_message_event(event.payload), bridge_from_event(event))
 
         return _message_context
 
@@ -146,7 +134,7 @@ class MessageContext:
             timeout=timeout,
             consume=True,
         )
-        return type(self)(_coerce_message_event(payload), self.bridge)
+        return type(self)(coerce_message_event(payload), self.bridge)
 
 
 def _normalize_content(content: MessageContent) -> list[SendMessageSegment]:
@@ -221,24 +209,9 @@ def _sent_message_from_response(response: APIResponse) -> SentMessage:
     return SentMessage(message_id=message_id, raw_response=response)
 
 
-def _coerce_message_event(payload: object) -> MessageEvent:
-    if isinstance(payload, (PrivateFriendMessage, PrivateGroupMessage, GroupMessage)):
-        return payload
-    if not isinstance(payload, dict):
-        raise TypeError("message_context() requires a message event payload")
-
-    message_type = payload.get("message_type")
-    sub_type = payload.get("sub_type")
-    if message_type == "group":
-        return GroupMessage.model_validate(payload)
-    if sub_type == "friend":
-        return PrivateFriendMessage.model_validate(payload)
-    return PrivateGroupMessage.model_validate(payload)
-
-
 def _is_followup_message(current: MessageEvent, candidate: object) -> bool:
     try:
-        message = _coerce_message_event(candidate)
+        message = coerce_message_event(candidate)
     except TypeError:
         return False
     if message.message_id == current.message_id:

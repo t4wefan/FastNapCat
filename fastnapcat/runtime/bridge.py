@@ -33,6 +33,7 @@ from fastnapcat.models.outbound import (
     OutboundMessageObservation,
 )
 from fastnapcat.runtime.transport import NapCatTransport
+from fastnapcat.runtime.registry import bridge_meta, register_bridge
 
 if TYPE_CHECKING:
     from fastnapcat.facade.api import APIExtension
@@ -47,6 +48,7 @@ class RuntimeBridge:
         self._app = app
         self.transport = transport
         self.debug = debug
+        self.bridge_id = register_bridge(self)
         self.transport.bind_inbound_handler(self.handle_inbound_text)
         self.api: APIExtension | None = None
         self._ready_future: asyncio.Future[None] | None = None
@@ -213,7 +215,11 @@ class RuntimeBridge:
                 tags,
                 type(payload).__name__,
             )
-        await self._app.publish(tags=tags, payload=payload)
+        await self._app.publish(
+            tags=tags,
+            payload=payload,
+            meta=bridge_meta(self.bridge_id),
+        )
 
     def _mark_ready(self) -> None:
         future = self._ready_future

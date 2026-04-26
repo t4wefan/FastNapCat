@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Self, get_args
+from typing import Self
 
 from fastevents import RuntimeEvent, dependency
 
+from fastnapcat.adapter.coerce import (
+    coerce_meta_event,
+    coerce_napcat_event,
+    coerce_notice_event,
+    coerce_request_event,
+)
 from fastnapcat.models.events import MetaEvent, NapCatEvent, NoticeEvent, RequestEvent
 
 
@@ -19,7 +25,7 @@ class NapCatEventContext:
     def _provider(cls):
         @dependency
         def _event_context(event: RuntimeEvent) -> Self:
-            return cls(event=event.payload, runtime_event=event)
+            return cls(event=coerce_napcat_event(event.payload), runtime_event=event)
 
         return _event_context
 
@@ -33,9 +39,7 @@ class MetaContext:
     def _provider(cls):
         @dependency
         def _meta_context(event: RuntimeEvent) -> Self:
-            payload = event.payload
-            if not isinstance(payload, get_args(MetaEvent)):
-                raise TypeError("meta context requires a meta event payload")
+            payload = coerce_meta_event(event.payload)
             return cls(event=payload, runtime_event=event)
 
         return _meta_context
@@ -50,9 +54,7 @@ class NoticeContext:
     def _provider(cls):
         @dependency
         def _notice_context(event: RuntimeEvent) -> Self:
-            payload = event.payload
-            if not isinstance(payload, get_args(NoticeEvent)):
-                raise TypeError("notice context requires a notice event payload")
+            payload = coerce_notice_event(event.payload)
             return cls(event=payload, runtime_event=event)
 
         return _notice_context
@@ -67,9 +69,7 @@ class RequestContext:
     def _provider(cls):
         @dependency
         def _request_context(event: RuntimeEvent) -> Self:
-            payload = event.payload
-            if not isinstance(payload, get_args(RequestEvent)):
-                raise TypeError("request context requires a request event payload")
+            payload = coerce_request_event(event.payload)
             return cls(event=payload, runtime_event=event)
 
         return _request_context

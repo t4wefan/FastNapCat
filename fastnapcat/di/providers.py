@@ -5,15 +5,15 @@ from __future__ import annotations
 import inspect
 from fastevents import RuntimeEvent, dependency
 
+from fastnapcat.adapter.coerce import coerce_message_event
 from fastnapcat.models.outbound import OutboundLogIntent
 from fastnapcat.models.segments import ReceiveImage, ReceiveImageAsset, ReceiveImages
-from fastnapcat.context.message import _coerce_message_event
 
 
 @dependency
 def message_text(event: RuntimeEvent) -> str:
     try:
-        payload = _coerce_message_event(event.payload)
+        payload = coerce_message_event(event.payload)
     except TypeError:
         return ""
     return payload.raw_message
@@ -38,7 +38,7 @@ def images(event: RuntimeEvent) -> ReceiveImages:
         return ReceiveImages(images=normalized_images)
 
     try:
-        message_event = _coerce_message_event(payload)
+        message_event = coerce_message_event(payload)
     except TypeError:
         return ReceiveImages(images=[])
 

@@ -11,6 +11,7 @@ from fastevents.exceptions import SessionNotConsumed
 from fastevents.subscribers import DependencyCall, DependencyScope, _DependencyResolver
 from pydantic import BaseModel as PydanticBaseModel, ValidationError
 
+from fastnapcat.adapter.coerce import coerce_message_event
 from fastnapcat.adapter.tags import (
     ROOT_NAPCAT,
     TAG_COMMAND,
@@ -25,9 +26,10 @@ from fastnapcat.command.parser import (
 )
 from fastnapcat.command.models import CommandArgs
 from fastnapcat.context.command import CommandContext
-from fastnapcat.context.message import MessageContext, _coerce_message_event
+from fastnapcat.context.message import MessageContext
 from fastnapcat.facade.api import APIExtension
 from fastnapcat.runtime.bridge import RuntimeBridge
+from fastnapcat.runtime.registry import bridge_from_event
 
 
 Handler = Callable[..., Awaitable[Any]]
@@ -203,11 +205,8 @@ def _wrap_command_handler(*, callback: Handler, spec: CommandSpec) -> Handler:
             event.meta.setdefault("command_prefixes", list(spec.prefixes))
 
         injected_kwargs: dict[str, Any] = {}
-        payload_model = _coerce_message_event(payload)
-        bridge = MessageContext._bound_bridge
-        if bridge is None:
-            raise RuntimeError("MessageContext bridge is not bound")
-        message_context = MessageContext(payload_model, bridge)
+        payload_model = coerce_message_event(payload)
+        message_context = MessageContext(payload_model, bridge_from_event(event))
         dependency_scope = DependencyScope(event=event, cache={}, resolving=set())
         dependency_resolver = _DependencyResolver(dependency_scope)
 

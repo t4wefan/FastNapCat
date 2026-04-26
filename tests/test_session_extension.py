@@ -102,7 +102,7 @@ async def test_prompt_consumes_followup_message_before_regular_subscribers():
         await next_ctx.reply(f"follow-up:{next_ctx.text}")
         replied.set()
 
-    @bot.on.group(level=1)
+    @bot.on.group(level=20)
     async def fallback(ctx: MessageContext):
         if ctx.text.startswith("/"):
             return
