@@ -22,7 +22,13 @@ from fastnapcat.command.parser import (
     ParsedCommand,
     parse_command_text,
 )
-from fastnapcat.command.models import CommandArgs
+from fastnapcat.command.models import (
+    COMMAND_META_KEY,
+    CommandArgs,
+    build_command_args,
+    command_meta_from_parsed,
+    encode_command_meta,
+)
 from fastnapcat.context.message import MessageContext
 from fastnapcat.facade.api import APIExtension
 from fastnapcat.runtime.bridge import RuntimeBridge
@@ -200,14 +206,11 @@ def _wrap_command_matcher(*, spec: CommandSpec) -> Handler:
 
         payload_model = coerce_message_event(payload)
         message_context = MessageContext(payload_model, bridge_from_event(event))
+        command_meta = command_meta_from_parsed(parsed, raw_text)
 
         if spec.args_model is not None:
             try:
-                _build_command_args(
-                    model=spec.args_model,
-                    parsed=parsed,
-                    raw_text=raw_text,
-                )
+                build_command_args(spec.args_model, command_meta)
             except ValidationError:
                 await message_context.reply(
                     _format_command_validation_error(
@@ -219,7 +222,7 @@ def _wrap_command_matcher(*, spec: CommandSpec) -> Handler:
                 return None
 
         meta = dict(event.meta)
-        meta["command_prefixes"] = list(spec.prefixes)
+        meta[COMMAND_META_KEY] = encode_command_meta(command_meta)
         await event.ctx.publish(
             tags=_command_event_tags(spec),
             payload=payload_model,
@@ -273,51 +276,6 @@ def _command_tag(name: str) -> str:
         for char in normalized
     ).strip("_.")
     return f"command.{safe or 'unknown'}"
-
-
-def _build_command_args(
-    *, model: type[CommandArgs], parsed: ParsedCommand, raw_text: str
-) -> CommandArgs:
-    metadata = {
-        "name": parsed.name,
-        "input_name": parsed.input_name,
-        "matched_prefix": parsed.matched_prefix,
-        "raw_text": raw_text,
-        "argv": parsed.argv,
-        "flags": parsed.flags,
-        "position_args": parsed.position_args,
-    }
-    values: dict[str, object] = {"parsed_command": metadata}
-    remaining_position_args = list(parsed.position_args)
-
-    for field_name, field_info in model.model_fields.items():
-        if field_name == "parsed_command":
-            continue
-        if field_name in metadata:
-            values[field_name] = metadata[field_name]
-            continue
-        aliases = [field_name]
-        if isinstance(field_info.alias, str) and field_info.alias not in aliases:
-            aliases.append(field_info.alias)
-        if isinstance(field_info.validation_alias, str):
-            aliases.append(field_info.validation_alias)
-        alias = getattr(field_info, "serialization_alias", None)
-        if isinstance(alias, str) and alias not in aliases:
-            aliases.append(alias)
-
-        matched = False
-        for candidate in aliases:
-            if candidate in parsed.flags:
-                values[field_name] = parsed.flags[candidate]
-                matched = True
-                break
-        if matched:
-            continue
-
-        if remaining_position_args:
-            values[field_name] = remaining_position_args.pop(0)
-
-    return model.model_validate(values)
 
 
 def _format_command_validation_error(

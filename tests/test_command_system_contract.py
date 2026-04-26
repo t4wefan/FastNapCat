@@ -231,3 +231,129 @@ async def test_derived_command_event_does_not_reach_regular_message_handlers():
         assert not fallback_called.is_set()
     finally:
         await bot.astop()
+
+
+@pytest.mark.asyncio
+async def test_command_invocation_meta_is_decoded_without_reparsing_message_text():
+    bot = FastNapCat()
+    seen: dict[str, object] = {}
+    ready = asyncio.Event()
+
+    @bot.command("echo", aliases=["say"], prefixes=["!"])
+    async def echo(cmd: CommandContext, args: FlagArgs):
+        seen["cmd_name"] = cmd.name
+        seen["cmd_input_name"] = cmd.input_name
+        seen["cmd_matched_prefix"] = cmd.matched_prefix
+        seen["cmd_flags"] = cmd.flags
+        seen["args_name"] = args.parsed_command.name
+        seen["args_input_name"] = args.parsed_command.input_name
+        seen["args_matched_prefix"] = args.parsed_command.matched_prefix
+        seen["args_flag1"] = args.flag1
+        ready.set()
+
+    await bot.astart()
+    try:
+        await bot.bridge.handle_inbound_text(
+            make_group_message("!say --flag1 hello").model_dump_json(by_alias=True)
+        )
+        await asyncio.wait_for(ready.wait(), timeout=1)
+        assert seen == {
+            "cmd_name": "say",
+            "cmd_input_name": "!say",
+            "cmd_matched_prefix": "!",
+            "cmd_flags": {"flag1": "hello"},
+            "args_name": "say",
+            "args_input_name": "!say",
+            "args_matched_prefix": "!",
+            "args_flag1": "hello",
+        }
+    finally:
+        await bot.astop()
+
+
+@pytest.mark.asyncio
+async def test_negative_level_message_observer_runs_before_command_consumes_original_message():
+    bot = FastNapCat()
+    seen: list[str] = []
+    ready = asyncio.Event()
+
+    @bot.on.group(level=-1)
+    async def early(ctx: MessageContext):
+        seen.append(f"early:{ctx.text}")
+
+    @bot.command("echo", prefixes=["/"], level=10)
+    async def echo():
+        seen.append("command")
+        ready.set()
+
+    @bot.on.group(level=20)
+    async def late(ctx: MessageContext):
+        seen.append(f"late:{ctx.text}")
+
+    await bot.astart()
+    try:
+        await bot.bridge.handle_inbound_text(
+            make_group_message("/echo hello").model_dump_json(by_alias=True)
+        )
+        await asyncio.wait_for(ready.wait(), timeout=1)
+        for _ in range(20):
+            if any(item.startswith("late:") for item in seen):
+                break
+            await asyncio.sleep(0)
+        assert seen == ["early:/echo hello", "command"]
+    finally:
+        await bot.astop()
+
+
+@pytest.mark.asyncio
+async def test_command_handler_level_is_independent_from_matcher_level():
+    bot = FastNapCat()
+    seen: list[str] = []
+    ready = asyncio.Event()
+
+    @bot.command("echo", prefixes=["/"], level=30)
+    async def echo():
+        seen.append("command")
+        ready.set()
+
+    @bot.on(("napcat", "command", "command.echo"), level=-1)
+    async def observer():
+        seen.append("observer")
+
+    await bot.astart()
+    try:
+        await bot.bridge.handle_inbound_text(
+            make_group_message("/echo hello").model_dump_json(by_alias=True)
+        )
+        await asyncio.wait_for(ready.wait(), timeout=1)
+        assert seen == ["observer", "command"]
+    finally:
+        await bot.astop()
+
+
+@pytest.mark.asyncio
+async def test_command_invocation_meta_preserves_numeric_strings():
+    bot = FastNapCat()
+    seen: dict[str, object] = {}
+    ready = asyncio.Event()
+
+    @bot.command("echo", prefixes=["/"])
+    async def echo(cmd: CommandContext):
+        seen["argv"] = cmd.argv
+        seen["flags"] = cmd.flags
+        seen["position_args"] = cmd.position_args
+        ready.set()
+
+    await bot.astart()
+    try:
+        await bot.bridge.handle_inbound_text(
+            make_group_message("/echo --duration 60 123").model_dump_json(by_alias=True)
+        )
+        await asyncio.wait_for(ready.wait(), timeout=1)
+        assert seen == {
+            "argv": ["--duration", "60", "123"],
+            "flags": {"duration": "60"},
+            "position_args": ["123"],
+        }
+    finally:
+        await bot.astop()

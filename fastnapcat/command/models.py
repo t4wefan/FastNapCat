@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any, get_origin
 
 from fastevents import RuntimeEvent, dependency
 from pydantic import Field
 
-from fastnapcat.command.parser import ParsedCommand, parse_command_text
+from fastnapcat.command.parser import ParsedCommand
 from fastnapcat.models.base import BaseModel
-from fastnapcat.models.events import GroupMessage, PrivateFriendMessage, PrivateGroupMessage
+
+
+COMMAND_META_KEY = "fastnapcat_command"
+COMMAND_META_PREFIX = "fastnapcat-command:"
 
 
 class CommandArgsMeta(BaseModel):
@@ -83,67 +88,11 @@ class CommandArgs(BaseModel):
 
         return cls._make_provider_for(cls)
 
-    @classmethod
-    def _parse_command_from_event(cls, event: RuntimeEvent) -> ParsedCommand:
-        payload = _coerce_command_payload(event.payload)
-        raw_message = getattr(payload, "raw_message", None)
-        if not isinstance(raw_message, str):
-            raise TypeError("command args require a message event payload")
-        meta = event.meta if isinstance(event.meta, dict) else {}
-        prefixes = meta.get("command_prefixes")
-        if not isinstance(prefixes, (list, tuple)):
-            prefixes = None
-        parsed = parse_command_text(raw_message, prefixes=prefixes)
-        if parsed is None:
-            raise RuntimeError("command args are not available for the current event")
-        return parsed
-
     @staticmethod
     def _make_provider_for(model: type["CommandArgs"]):
         @dependency
         def _command_args(event: RuntimeEvent) -> CommandArgs:
-            payload = _coerce_command_payload(event.payload)
-            parsed = model._parse_command_from_event(event)
-            metadata = {
-                "name": parsed.name,
-                "input_name": parsed.input_name,
-                "matched_prefix": parsed.matched_prefix,
-                "raw_text": payload.raw_message,
-                "argv": parsed.argv,
-                "flags": parsed.flags,
-                "position_args": parsed.position_args,
-            }
-            values: dict[str, object] = {"parsed_command": metadata}
-            remaining_position_args = list(parsed.position_args)
-
-            for field_name, field_info in model.model_fields.items():
-                if field_name == "parsed_command":
-                    continue
-                if field_name in metadata:
-                    values[field_name] = metadata[field_name]
-                    continue
-                aliases = [field_name]
-                if isinstance(field_info.alias, str) and field_info.alias not in aliases:
-                    aliases.append(field_info.alias)
-                if isinstance(field_info.validation_alias, str):
-                    aliases.append(field_info.validation_alias)
-                alias = getattr(field_info, "serialization_alias", None)
-                if isinstance(alias, str) and alias not in aliases:
-                    aliases.append(alias)
-
-                matched = False
-                for candidate in aliases:
-                    if candidate in parsed.flags:
-                        values[field_name] = parsed.flags[candidate]
-                        matched = True
-                        break
-                if matched:
-                    continue
-
-                if remaining_position_args:
-                    values[field_name] = remaining_position_args.pop(0)
-
-            return model.model_validate(values)
+            return build_command_args(model, get_command_meta(event))
 
         return _command_args
 
@@ -165,18 +114,81 @@ class CommandArgs(BaseModel):
             return True
         return origin is dict
 
+def command_meta_from_parsed(parsed: ParsedCommand, raw_text: str) -> CommandArgsMeta:
+    return CommandArgsMeta(
+        name=parsed.name,
+        input_name=parsed.input_name,
+        matched_prefix=parsed.matched_prefix,
+        raw_text=raw_text,
+        argv=parsed.argv,
+        flags=parsed.flags,
+        position_args=parsed.position_args,
+    )
 
-def _coerce_command_payload(
-    payload: object,
-) -> PrivateFriendMessage | PrivateGroupMessage | GroupMessage:
-    if isinstance(payload, (PrivateFriendMessage, PrivateGroupMessage, GroupMessage)):
-        return payload
-    if not isinstance(payload, dict):
-        raise TypeError("command args require a message event payload")
-    message_type = payload.get("message_type")
-    sub_type = payload.get("sub_type")
-    if message_type == "group":
-        return GroupMessage.model_validate(payload)
-    if sub_type == "friend":
-        return PrivateFriendMessage.model_validate(payload)
-    return PrivateGroupMessage.model_validate(payload)
+
+def get_command_meta(event: RuntimeEvent) -> CommandArgsMeta:
+    meta = event.meta if isinstance(event.meta, dict) else {}
+    command_meta = meta.get(COMMAND_META_KEY)
+    if command_meta is None:
+        raise RuntimeError("command metadata is not available for the current event")
+    if isinstance(command_meta, CommandArgsMeta):
+        return command_meta
+    if isinstance(command_meta, dict):
+        return CommandArgsMeta.model_validate(command_meta)
+    if isinstance(command_meta, str):
+        return decode_command_meta(command_meta)
+    raise TypeError("command metadata must be encoded or mapping data")
+
+
+def encode_command_meta(command_meta: CommandArgsMeta) -> str:
+    raw = json.dumps(
+        command_meta.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"{COMMAND_META_PREFIX}{base64.urlsafe_b64encode(raw).decode('ascii')}"
+
+
+def decode_command_meta(encoded: str) -> CommandArgsMeta:
+    if not encoded.startswith(COMMAND_META_PREFIX):
+        raise TypeError("command metadata string has an unsupported format")
+    raw = base64.urlsafe_b64decode(encoded.removeprefix(COMMAND_META_PREFIX))
+    return CommandArgsMeta.model_validate(json.loads(raw.decode("utf-8")))
+
+
+def build_command_args(
+    model: type[CommandArgs],
+    command_meta: CommandArgsMeta,
+) -> CommandArgs:
+    metadata = command_meta.model_dump(mode="json")
+    values: dict[str, object] = {"parsed_command": metadata}
+    remaining_position_args = list(command_meta.position_args)
+
+    for field_name, field_info in model.model_fields.items():
+        if field_name == "parsed_command":
+            continue
+        if field_name in metadata:
+            values[field_name] = metadata[field_name]
+            continue
+        aliases = [field_name]
+        if isinstance(field_info.alias, str) and field_info.alias not in aliases:
+            aliases.append(field_info.alias)
+        if isinstance(field_info.validation_alias, str):
+            aliases.append(field_info.validation_alias)
+        alias = getattr(field_info, "serialization_alias", None)
+        if isinstance(alias, str) and alias not in aliases:
+            aliases.append(alias)
+
+        matched = False
+        for candidate in aliases:
+            if candidate in command_meta.flags:
+                values[field_name] = command_meta.flags[candidate]
+                matched = True
+                break
+        if matched:
+            continue
+
+        if remaining_position_args:
+            values[field_name] = remaining_position_args.pop(0)
+
+    return model.model_validate(values)
