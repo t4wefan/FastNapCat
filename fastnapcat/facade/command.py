@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any, get_type_hints
 
 from fastevents import FastEvents, RuntimeEvent
 from fastevents.exceptions import SessionNotConsumed
-from fastevents.subscribers import DependencyCall, DependencyScope, _DependencyResolver
-from pydantic import BaseModel as PydanticBaseModel, ValidationError
+from pydantic import ValidationError
 
 from fastnapcat.adapter.coerce import coerce_message_event
 from fastnapcat.adapter.tags import (
@@ -25,7 +23,6 @@ from fastnapcat.command.parser import (
     parse_command_text,
 )
 from fastnapcat.command.models import CommandArgs
-from fastnapcat.context.command import CommandContext
 from fastnapcat.context.message import MessageContext
 from fastnapcat.facade.api import APIExtension
 from fastnapcat.runtime.bridge import RuntimeBridge
@@ -86,17 +83,17 @@ class CommandExtension:
             self._command_specs[normalized] = active_spec
 
             if private and group:
-                subscription = (ROOT_NAPCAT, TAG_MESSAGE)
+                message_subscription = (ROOT_NAPCAT, TAG_MESSAGE)
             elif private:
-                subscription = (ROOT_NAPCAT, TAG_MESSAGE, TAG_PRIVATE)
+                message_subscription = (ROOT_NAPCAT, TAG_MESSAGE, TAG_PRIVATE)
             else:
-                subscription = (ROOT_NAPCAT, TAG_MESSAGE, TAG_GROUP)
+                message_subscription = (ROOT_NAPCAT, TAG_MESSAGE, TAG_GROUP)
 
-            wrapped = _wrap_command_handler(
-                callback=callback,
+            matcher = _wrap_command_matcher(
                 spec=active_spec,
             )
-            self.app.on(subscription, level=level)(wrapped)
+            self.app.on(message_subscription, level=level)(matcher)
+            self.app.on(_command_subscription(active_spec))(callback)
             return callback
 
         return decorator
@@ -181,19 +178,19 @@ class CommandSpec:
         )
 
 
-def _wrap_command_handler(*, callback: Handler, spec: CommandSpec) -> Handler:
-    signature = inspect.signature(callback)
-    callback_type_hints = get_type_hints(callback)
+def _wrap_command_matcher(*, spec: CommandSpec) -> Handler:
+    async def _matcher(event: RuntimeEvent):
+        if any(tag.startswith("command.") for tag in event.tags):
+            raise SessionNotConsumed()
 
-    async def _wrapped(event: RuntimeEvent):
         command_source = _extract_command_source_from_event(event)
         if command_source is None:
-            return None
+            raise SessionNotConsumed()
         raw_text, message_type, payload = command_source
         if message_type == "private" and not spec.private:
-            return None
+            raise SessionNotConsumed()
         if message_type == "group" and not spec.group:
-            return None
+            raise SessionNotConsumed()
 
         parsed = parse_command_text(raw_text, prefixes=spec.prefixes)
         if parsed is None:
@@ -201,66 +198,36 @@ def _wrap_command_handler(*, callback: Handler, spec: CommandSpec) -> Handler:
         if parsed.name != spec.name and parsed.name not in spec.aliases:
             raise SessionNotConsumed()
 
-        if isinstance(event.meta, dict):
-            event.meta.setdefault("command_prefixes", list(spec.prefixes))
-
-        injected_kwargs: dict[str, Any] = {}
         payload_model = coerce_message_event(payload)
         message_context = MessageContext(payload_model, bridge_from_event(event))
-        dependency_scope = DependencyScope(event=event, cache={}, resolving=set())
-        dependency_resolver = _DependencyResolver(dependency_scope)
 
-        for parameter_name, parameter in signature.parameters.items():
-            annotation = callback_type_hints.get(parameter_name)
-            if annotation is RuntimeEvent:
-                injected_kwargs[parameter_name] = event
-                continue
-            if annotation is CommandContext:
-                injected_kwargs[parameter_name] = CommandContext.from_parsed(
-                    parsed,
-                    raw_text,
+        if spec.args_model is not None:
+            try:
+                _build_command_args(
+                    model=spec.args_model,
+                    parsed=parsed,
+                    raw_text=raw_text,
                 )
-                continue
-            if annotation is MessageContext:
-                injected_kwargs[parameter_name] = message_context
-                continue
-            if (
-                isinstance(annotation, type)
-                and issubclass(annotation, CommandArgs)
-                and annotation is not CommandArgs
-            ):
-                try:
-                    injected_kwargs[parameter_name] = _build_command_args(
-                        model=annotation,
+            except ValidationError:
+                await message_context.reply(
+                    _format_command_validation_error(
+                        spec=spec,
+                        model=spec.args_model,
                         parsed=parsed,
-                        raw_text=raw_text,
                     )
-                except ValidationError:
-                    await message_context.reply(
-                        _format_command_validation_error(
-                            spec=spec,
-                            model=annotation,
-                            parsed=parsed,
-                        )
-                    )
-                    return None
-                continue
-            if isinstance(annotation, type) and _is_payload_model(annotation):
-                injected_kwargs[parameter_name] = _resolve_payload_annotation(
-                    annotation=annotation,
-                    payload=payload,
                 )
-                continue
-            if isinstance(parameter.default, DependencyCall):
-                injected_kwargs[parameter_name] = await dependency_resolver.resolve_dependency(
-                    parameter.default.dependency
-                )
-                continue
-            if parameter.default is not inspect.Signature.empty:
-                injected_kwargs[parameter_name] = parameter.default
-        return await callback(**injected_kwargs)
+                return None
 
-    return _wrapped
+        meta = dict(event.meta)
+        meta["command_prefixes"] = list(spec.prefixes)
+        await event.ctx.publish(
+            tags=_command_event_tags(spec),
+            payload=payload_model,
+            meta=meta,
+        )
+        return None
+
+    return _matcher
 
 
 def _extract_command_source_from_event(
@@ -289,6 +256,23 @@ def _validate_command_tokens(
                 raise ValueError(
                     f"command token '{token}' must not include prefix '{prefix}'"
                 )
+
+
+def _command_subscription(spec: CommandSpec) -> tuple[str, ...]:
+    return (ROOT_NAPCAT, TAG_COMMAND, _command_tag(spec.name))
+
+
+def _command_event_tags(spec: CommandSpec) -> tuple[str, ...]:
+    return (ROOT_NAPCAT, TAG_COMMAND, _command_tag(spec.name))
+
+
+def _command_tag(name: str) -> str:
+    normalized = name.lower().strip()
+    safe = "".join(
+        char if (char.isalnum() or char in {"_", "."}) else "_"
+        for char in normalized
+    ).strip("_.")
+    return f"command.{safe or 'unknown'}"
 
 
 def _build_command_args(
@@ -432,19 +416,3 @@ def _format_command_field_option(field_name: str, field_info: Any) -> str | None
     if parts:
         return " | ".join(parts)
     return None
-
-
-def _is_payload_model(annotation: type[Any]) -> bool:
-    return issubclass(annotation, PydanticBaseModel)
-
-
-def _resolve_payload_annotation(*, annotation: type[Any], payload: object) -> Any:
-    if isinstance(payload, annotation):
-        return payload
-    if isinstance(payload, dict):
-        return annotation.model_validate(payload)
-    if hasattr(payload, "model_dump"):
-        data = getattr(payload, "model_dump")(by_alias=True)
-    else:
-        data = payload
-    return annotation.model_validate(data)

@@ -45,10 +45,10 @@ def test_parse_command_text():
     assert parsed.position_args == ["hello world"]
 
 
-def test_protocol_adds_command_tag():
+def test_protocol_does_not_mark_raw_messages_as_commands():
     payload = make_group_message().model_dump(by_alias=True)
     envelope = parse_inbound_payload(payload)
-    assert TAG_COMMAND in envelope.tags
+    assert TAG_COMMAND not in envelope.tags
 
 
 def test_command_args_help_text_describes_model_fields():

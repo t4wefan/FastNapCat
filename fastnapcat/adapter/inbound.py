@@ -6,14 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from fastnapcat.adapter.coerce import coerce_napcat_event
-from fastnapcat.adapter.tags import TAG_COMMAND, build_tags
+from fastnapcat.adapter.tags import build_tags
 from fastnapcat.api.responses import APIResponse
-from fastnapcat.models.events import (
-    GroupMessage,
-    NapCatEvent,
-    PrivateFriendMessage,
-    PrivateGroupMessage,
-)
+from fastnapcat.models.events import NapCatEvent
 
 
 @dataclass(slots=True)
@@ -29,8 +24,6 @@ def parse_inbound_payload(payload: dict[str, Any]) -> InboundEnvelope:
 
     model = coerce_napcat_event(payload)
     tags = build_tags(model)
-    if _looks_like_command_message(model):
-        tags = (*tags, TAG_COMMAND)
     return InboundEnvelope(model=model, tags=tags)
 
 
@@ -56,8 +49,3 @@ def debug_parse_inbound_payload(payload: dict[str, Any]) -> InboundEnvelope:
 def _looks_like_api_response(payload: dict[str, Any]) -> bool:
     return "status" in payload and "retcode" in payload
 
-
-def _looks_like_command_message(model: NapCatEvent) -> bool:
-    if not isinstance(model, (PrivateFriendMessage, PrivateGroupMessage, GroupMessage)):
-        return False
-    return bool(model.raw_message.strip())

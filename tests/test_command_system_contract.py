@@ -162,10 +162,6 @@ async def test_command_handler_keeps_standard_dependency_injection_surface():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason="command router should publish derived command events with atomic tags",
-)
 async def test_command_dispatch_publishes_derived_event_with_atomic_command_tag():
     bot = FastNapCat()
     seen: dict[str, object] = {}
@@ -177,7 +173,7 @@ async def test_command_dispatch_publishes_derived_event_with_atomic_command_tag(
         seen["command_arg"] = args.flag1
         command_ready.set()
 
-    @bot.on(("napcat", "message", "command", "command.echo"), level=0)
+    @bot.on(("napcat", "command", "command.echo"), level=0)
     async def observe_command_event(
         event: RuntimeEvent,
         cmd: CommandContext,
@@ -201,5 +197,37 @@ async def test_command_dispatch_publishes_derived_event_with_atomic_command_tag(
         assert seen["derived_name"] == "echo"
         assert seen["derived_arg"] == "hello"
         assert seen["derived_payload_type"] is GroupMessage
+    finally:
+        await bot.astop()
+
+
+@pytest.mark.asyncio
+async def test_derived_command_event_does_not_reach_regular_message_handlers():
+    bot = FastNapCat()
+    seen: dict[str, object] = {}
+    command_ready = asyncio.Event()
+    fallback_called = asyncio.Event()
+
+    @bot.command("echo", prefixes=["/"])
+    async def echo():
+        command_ready.set()
+
+    @bot.on.group(level=20)
+    async def fallback(ctx: MessageContext):
+        seen["fallback_text"] = ctx.text
+        fallback_called.set()
+
+    await bot.astart()
+    try:
+        await bot.bridge.handle_inbound_text(
+            make_group_message("/echo hello").model_dump_json(by_alias=True)
+        )
+        await asyncio.wait_for(command_ready.wait(), timeout=1)
+        for _ in range(20):
+            if fallback_called.is_set():
+                break
+            await asyncio.sleep(0)
+        assert "fallback_text" not in seen
+        assert not fallback_called.is_set()
     finally:
         await bot.astop()
